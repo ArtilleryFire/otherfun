@@ -52,7 +52,7 @@ function isPidAlive(pid) {
 }
 
 /* on ready */
-client.once("ready", () => {  // Fixed: Was "clientReady", should be "ready"
+client.once("clientReady", () => {  // Fixed: Was "clientReady", should be "ready"
   console.log(`Controller online as: ${client.user.tag}`);
 
   restoreRunningBots();
@@ -122,3 +122,4 @@ async function sendLogLines(botName, lines) {
     if (next.length > 3900) {
       if (msg.length) {
         await channel.send("
+
