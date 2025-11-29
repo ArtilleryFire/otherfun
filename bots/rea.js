@@ -193,11 +193,11 @@ function createBot() {
   });
 
 bot.on("end", (reason) => {
-  log(`Disconnected: ${reason || "Unknown reason"}, reconnecting in 5s...`, true);
+  log(`Disconnected: ${reason || "Unknown reason"}. Full error: ${JSON.stringify(reason)}`, true);
   botDisconnected = true;
   botReady = false;
   isLoopRunning = false;
-  setTimeout(createBot, 5000);
+  setTimeout(createBot, 10000);  // Increase delay to 10s to avoid spam
 });
 }
 
@@ -497,4 +497,5 @@ async function mainLoop() {
 createBot();
 ipcLoop();
 heartbeat();
+
 
