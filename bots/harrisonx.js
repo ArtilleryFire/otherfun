@@ -7,7 +7,7 @@ const path = require("path");
 /* config */
 const CONFIG = {
   mc: {
-    host: "alwination.id",
+    host: "localhost",
     port: 25565,
     version: "1.21.1",
     username: "HarrisonX",
@@ -498,6 +498,7 @@ async function mainLoop() {
 createBot();
 ipcLoop();
 heartbeat();
+
 
 
 
