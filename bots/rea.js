@@ -171,11 +171,11 @@ function createBot() {
     setTimeout(() => {
       bot.chat(`/login ${CONFIG.mc.loginPassword}`);
       log("Sent /login");
-    }, 3000);
+    }, 5000);
     setTimeout(() => {
       bot.chat(CONFIG.mc.queueCommand);
       log("Sent queue command");
-    }, 6000);
+    }, 7000);
     setTimeout(() => {
       if (bot.player) {
         botReady = true;
@@ -438,7 +438,7 @@ async function sellSection() {
 /* main loop */
 async function mainLoop() {
   log("Main loop waiting for botReady");
-  while (!botReady) await sleep(500);
+  while (!botReady) await sleep(1000);
   log("Main loop started", true);
 
   while (true) {
@@ -497,5 +497,6 @@ async function mainLoop() {
 createBot();
 ipcLoop();
 heartbeat();
+
 
 
