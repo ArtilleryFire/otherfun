@@ -2,15 +2,13 @@ const mineflayer = require("mineflayer");
 const mcDataLoader = require("minecraft-data");
 const fs = require("fs");
 const path = require("path");
-const { SocksProxyAgent } = require('socks-proxy-agent')
-const agent = new SocksProxyAgent('socks5://127.0.0.1:40000')
+
 
 /* config */
 const CONFIG = {
   mc: {
     host: "alwination.id",
     port: 25565,
-    agent: agent,
     version: "1.21.1",
     username: "HarrisonX",
     loginPassword: "123rty",
