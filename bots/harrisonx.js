@@ -192,13 +192,13 @@ function createBot() {
     }
   });
 
-  bot.on("end", () => {
-    log("Disconnected, reconnecting in 5s...", true);
-    botDisconnected = true;
-    botReady = false;
-    isLoopRunning = false;
-    setTimeout(createBot, 5000);
-  });
+bot.on("end", (reason) => {
+  log(`Disconnected: ${reason || "Unknown reason"}, reconnecting in 5s...`, true);
+  botDisconnected = true;
+  botReady = false;
+  isLoopRunning = false;
+  setTimeout(createBot, 5000);
+});
 }
 
 /* clear cursor by placing into first empty slot in open window */
@@ -497,3 +497,4 @@ async function mainLoop() {
 createBot();
 ipcLoop();
 heartbeat();
+
