@@ -52,7 +52,7 @@ function isPidAlive(pid) {
 }
 
 /* on ready */
-client.once("ready", () => {
+client.once("clientReady", () => {
   console.log(`Controller online as: ${client.user.tag}`);
 
   restoreRunningBots();
@@ -273,3 +273,4 @@ if (!DISCORD_TOKEN) {
 }
 
 client.login(DISCORD_TOKEN);
+
