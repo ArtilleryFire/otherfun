@@ -36,7 +36,7 @@ function createBot(options) {
     // Auto /login kalau password diisi
     if (options.loginPassword) {
       log('Sending /login command...')
-      bot.chat(`/login ${options.loginPassword}`)
+      bot.chat(`/register ${options.loginPassword}`)
     }
 
     // Kalau mau auto /register atau /server survival, tinggal tambah di sini
