@@ -1,108 +1,94 @@
-// Mineflayer registration bot
-//
-// This script uses the mineflayer library to connect to an offline (cracked)
-// Minecraft server and register a new AuthMe account.  It prompts the user for a
-// username and password via the console before connecting.  Once the bot
-// spawns on the server it sends a `/register` command using the provided
-// credentials and then logs all chat messages to the console.
-//
-// Before running this script you need to install the mineflayer package:
-//    npm install mineflayer
-// Then run the bot with Node.js:
-//    node mineflayer_bot.js
+// bot.js
+const mineflayer = require('mineflayer')
 
-const mineflayer = require('mineflayer');
-const readline = require('readline');
+const HOST = process.env.MC_HOST || 'alwination.id'
+const PORT = Number(process.env.MC_PORT || 25565)
+const USERNAME = process.env.MC_USERNAME || 'NaftarDD'
+// Ganti sesuai versi server kalau tahu, misal '1.21', '1.20.4', dll
+const VERSION = process.env.MC_VERSION || '1.20.4'
 
-// Helper to prompt the user for input
-function ask(question) {
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-  return new Promise((resolve) => {
-    rl.question(question, (answer) => {
-      rl.close();
-      resolve(answer.trim());
-    });
-  });
+// delay reconnect biar nggak kebaca flood / bot attack
+const RETRY_DELAY_MS = Number(process.env.MC_RETRY_DELAY || 15000)
+
+let bot
+let reconnectTimeout = null
+
+function log(...args) {
+  const time = new Date().toISOString().split('T')[1].replace('Z', '')
+  console.log(`[${time}]`, ...args)
 }
 
-async function main() {
-  try {
-    // Prompt for a username and password.  These will be used to create the
-    // account on the cracked server via the `/register` command.  The
-    // username is also used to connect to the server; no Mojang authentication
-    // is performed because the server is in offline mode【250972018556710†L150-L158】.
-    const username = await ask('Enter a username for the bot: ');
-    const password = await ask('Enter a password (for /register): ');
-
-    if (!username || !password) {
-      console.log('Username and password are required.');
-      return;
-    }
-
-    // Number of times we've attempted to connect
-    let attempts = 0;
-    const maxAttempts = 10;
-
-    // Define a function that tries to connect.  If the connection is reset or
-    // ends unexpectedly, it will retry up to maxAttempts times.  On the final
-    // failure it logs "FAILED TO CONNECT".
-    const connect = () => {
-      attempts++;
-      console.log(`Attempt ${attempts} of ${maxAttempts}: connecting to alwination.id as ${username}...`);
-
-      const bot = mineflayer.createBot({
-        host: 'play.craftnesia.my.id',
-        port: 25565,
-        username: username,
-      });
-
-      bot.once('spawn', () => {
-        console.log('Bot spawned on the server. Sending register command...');
-        const registerCommand = `/register ${password}`;
-        bot.chat(registerCommand);
-        const aftermath = `/joinq survival`;
-        bot.chat(aftermath);
-        console.log('joining survival');
-        const test1 = `/login`;
-        const test2 = `/register`;
-        bot.chat(test1);
-        bot.chat(test2);
-      })
-
-      bot.on('chat', (sender, message) => {
-        console.log(`[${sender}] ${message}`);
-      });
-
-      // On any error, attempt to reconnect if we haven't reached maxAttempts.
-      bot.on('error', (err) => {
-        console.error('Bot encountered an error:', err);
-        if (attempts < maxAttempts) {
-          // Allow time for cleanup before reconnecting
-          setTimeout(connect, 2000);
-        } else {
-          console.error('FAILED TO CONNECT');
-        }
-      });
-
-      // If the connection ends unexpectedly (e.g. ECONNRESET), try to reconnect.
-      bot.on('end', () => {
-        console.log('Bot disconnected from the server.');
-        if (attempts < maxAttempts) {
-          setTimeout(connect, 1000);
-        } else {
-          console.error('FAILED TO CONNECT');
-        }
-      });
-    };
-
-    // Initiate the first connection attempt
-    connect();
-  } catch (err) {
-    console.error(err);
+function createBot() {
+  if (reconnectTimeout) {
+    clearTimeout(reconnectTimeout)
+    reconnectTimeout = null
   }
+
+  log('Creating bot...')
+
+  bot = mineflayer.createBot({
+    host: HOST,
+    port: PORT,
+    username: USERNAME,
+    version: VERSION,
+    // kalau pakai akun resmi Microsoft:
+    // auth: 'microsoft',
+    // password: '...'
+  })
+
+  // EVENT: berhasil join dunia
+  bot.once('spawn', () => {
+    log('Bot spawned on the server.')
+
+    // Contoh: kirim command otomatis setelah join
+    // (Sesuaikan dengan kebutuhan server kamu)
+    // bot.chat('/register password password')
+    // bot.chat('/login password')
+    // bot.chat('/server survival')
+  })
+
+  // EVENT: chat (kalau ada error parsing, minimal kita lihat raw-nya)
+  bot.on('message', (jsonMsg, position) => {
+    try {
+      // beberapa versi pakai .toAnsi(), beberapa .toString()
+      const msg = jsonMsg.toAnsi ? jsonMsg.toAnsi() : jsonMsg.toString()
+      log('[CHAT]', msg)
+    } catch (err) {
+      log('[CHAT RAW]', JSON.stringify(jsonMsg, null, 2))
+    }
+  })
+
+  // EVENT: error dari mineflayer / koneksi
+  bot.on('error', (err) => {
+    log('Bot error:', err && err.stack ? err.stack : err)
+
+    // Banyak ECONNRESET dari server → biarkan handler 'end' yang urus reconnect
+    if (err.code === 'ECONNRESET') {
+      log('Connection reset by server (ECONNRESET).')
+    }
+  })
+
+  // EVENT: koneksi terputus
+  bot.on('end', () => {
+    log('Bot disconnected from server. Scheduling reconnect...')
+
+    if (!reconnectTimeout) {
+      reconnectTimeout = setTimeout(() => {
+        log(`Reconnecting to ${HOST}:${PORT} as ${USERNAME}...`)
+        createBot()
+      }, RETRY_DELAY_MS)
+    }
+  })
 }
 
-main();
+// Handler global biar Node.js nggak langsung mati tanpa log
+process.on('uncaughtException', (err) => {
+  log('Uncaught exception:', err && err.stack ? err.stack : err)
+})
+
+process.on('unhandledRejection', (reason) => {
+  log('Unhandled rejection:', reason)
+})
+
+// Start pertama kali
+createBot()
