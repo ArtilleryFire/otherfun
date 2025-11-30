@@ -54,7 +54,7 @@ async function main() {
       console.log(`Attempt ${attempts} of ${maxAttempts}: connecting to alwination.id as ${username}...`);
 
       const bot = mineflayer.createBot({
-        host: 'alwination.id',
+        host: 'play.craftnesia.my.id',
         port: 25565,
         username: username,
       });
