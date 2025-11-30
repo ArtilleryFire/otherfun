@@ -10,26 +10,57 @@ const fs = require("fs");
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const CMD_CHANNEL = "1443873014058844271"; // command channel id
 
-/* bot config */
+/* bot config: these are logical bot names used in commands */
 const BOT_CONFIG = {
-  harrisonx: {
+  code: {
     logChannel: "1442086293029916693",
-    logFile: path.join(__dirname, "logs", "harrisonx.log"),
-    ipcFile: path.join(__dirname, "ipc", "harrisonx.json"),
-    pidFile: path.join(__dirname, "ipc", "harrisonx.pid"),
+    logFile: path.join(__dirname, "logs", "code.log"),
+    ipcFile: path.join(__dirname, "ipc", "code.json"),
+    pidFile: path.join(__dirname, "ipc", "code.pid"),
     lastSize: 0
   },
-  rea: {
+  rey: {
+    logChannel: "1444306259787645120",
+    logFile: path.join(__dirname, "logs", "rey.log"),
+    ipcFile: path.join(__dirname, "ipc", "rey.json"),
+    pidFile: path.join(__dirname, "ipc", "rey.pid"),
+    lastSize: 0
+  },
+  mate: {
     logChannel: "1444044532336431337",
-    logFile: path.join(__dirname, "logs", "rea.log"),
-    ipcFile: path.join(__dirname, "ipc", "rea.json"),
-    pidFile: path.join(__dirname, "ipc", "rea.pid"),
+    logFile: path.join(__dirname, "logs", "mate.log"),
+    ipcFile: path.join(__dirname, "ipc", "mate.json"),
+    pidFile: path.join(__dirname, "ipc", "mate.pid"),
+    lastSize: 0
+  },
+  tega: {
+    logChannel: "1444362238965317663",
+    logFile: path.join(__dirname, "logs", "tega.log"),
+    ipcFile: path.join(__dirname, "ipc", "tega.json"),
+    pidFile: path.join(__dirname, "ipc", "tega.pid"),
     lastSize: 0
   }
 };
 
+/* batch config: which bots are in which batch */
+const BATCH_CONFIG = {
+  batch1: {
+    script: path.join(__dirname, "bots", "batch1.js"),
+    bots: ["harrisonx", "mate"]
+  },
+  batch2: {
+    script: path.join(__dirname, "bots", "batch2.js"),
+    bots: ["tega", "fia"]
+  }
+};
+
+/* track which bots we think are running, and PIDs for batches */
 const activeBots = {};
 let ipcIdCounter = Date.now();
+const batchPids = {
+  batch1: null,
+  batch2: null
+};
 
 /* discord client */
 const client = new Client({
@@ -40,11 +71,11 @@ const client = new Client({
   ]
 });
 
-/* helper: check if pid is alive (linux) */
+/* helper: check if pid is alive (windows) */
 function isPidAlive(pid) {
   try {
-    // Use /proc filesystem to check if process exists (Linux-specific)
-    return fs.existsSync(`/proc/${pid}`);
+    const out = spawnSync("tasklist", ["/FI", `PID eq ${pid}`], { encoding: "utf8" });
+    return out.stdout && out.stdout.includes(pid.toString());
   } catch (err) {
     console.error("isPidAlive error:", err.message);
     return false;
@@ -59,7 +90,7 @@ client.once("clientReady", () => {
   startLogTailer();
 });
 
-/* restore bots that were already running before controller restart */
+/* restore bots that were running before controller restart */
 function restoreRunningBots() {
   for (const name in BOT_CONFIG) {
     const cfg = BOT_CONFIG[name];
@@ -158,6 +189,21 @@ function getBotPid(botName) {
   }
 }
 
+/* best-effort: derive batch PID from its bots' pid files */
+function deriveBatchPid(batchName) {
+  const batchCfg = BATCH_CONFIG[batchName];
+  if (!batchCfg) return null;
+
+  let pid = null;
+  for (const botName of batchCfg.bots) {
+    const botPid = getBotPid(botName);
+    if (!botPid) return null;
+    if (pid === null) pid = botPid;
+    else if (pid !== botPid) return null; // mismatch
+  }
+  return pid;
+}
+
 /* message handler */
 client.on("messageCreate", async (msg) => {
   try {
@@ -167,21 +213,92 @@ client.on("messageCreate", async (msg) => {
     const parts = msg.content.trim().split(" ");
     const cmd = (parts.shift() || "").toLowerCase();
 
+    /* ;bot <BotName|batch1|batch2|all> */
     if (cmd === ";bot") {
-      const botName = parts[0];
-      if (!botName) return msg.reply("Usage: ;bot <BotName>");
+      const argRaw = parts[0];
+      const arg = (argRaw || "").toLowerCase();
+      if (!arg) return msg.reply("Usage: ;bot <BotName|batch1|batch2|all>");
+
+      // batches
+      if (arg === "batch1" || arg === "batch2") {
+        const batchName = arg;
+        const batchCfg = BATCH_CONFIG[batchName];
+        if (!batchCfg) return msg.reply("Unknown batch.");
+
+        if (batchPids[batchName] && isPidAlive(batchPids[batchName])) {
+          return msg.reply(`${batchName} already running (pid=${batchPids[batchName]}).`);
+        }
+
+        if (!fs.existsSync(batchCfg.script)) {
+          return msg.reply(`Batch script not found: ${batchCfg.script}`);
+        }
+
+        // clear logs for bots in this batch
+        for (const name of batchCfg.bots) {
+          const cfg = BOT_CONFIG[name];
+          if (!cfg) continue;
+          try {
+            fs.writeFileSync(cfg.logFile, "");
+            cfg.lastSize = 0;
+            console.log(`Cleared log for ${name}: ${cfg.logFile}`);
+          } catch (err) {
+            console.error(`Failed to clear log for ${name}:`, err.message);
+          }
+        }
+
+        const child = spawn("node", [batchCfg.script], {
+          detached: true,
+          stdio: "ignore"
+        });
+        batchPids[batchName] = child.pid;
+        child.unref();
+
+        for (const name of batchCfg.bots) {
+          activeBots[name] = true;
+        }
+
+        return msg.reply(`Started ${batchName} (pid=${batchPids[batchName]}).`);
+      }
+
+      if (arg === "all") {
+        // start both batches
+        let msgText = "";
+        for (const bName of Object.keys(BATCH_CONFIG)) {
+          const bCfg = BATCH_CONFIG[bName];
+          if (!fs.existsSync(bCfg.script)) {
+            msgText += `Batch script not found: ${bCfg.script}\n`;
+            continue;
+          }
+          if (batchPids[bName] && isPidAlive(batchPids[bName])) {
+            msgText += `${bName} already running (pid=${batchPids[bName]}).\n`;
+            continue;
+          }
+
+          const child = spawn("node", [bCfg.script], {
+            detached: true,
+            stdio: "ignore"
+          });
+          batchPids[bName] = child.pid;
+          child.unref();
+
+          for (const name of bCfg.bots) activeBots[name] = true;
+          msgText += `Started ${bName} (pid=${batchPids[bName]}).\n`;
+        }
+        return msg.reply("```\n" + msgText + "```");
+      }
+
+      // start single-bot script (legacy mode, optional)
+      const botName = arg;
       if (!BOT_CONFIG[botName]) return msg.reply("Unknown bot name.");
       if (activeBots[botName]) return msg.reply("Bot is already marked as running.");
 
       const cfg = BOT_CONFIG[botName];
-
       const botPath = path.join(__dirname, "bots", botName + ".js");
       if (!fs.existsSync(botPath)) return msg.reply("Bot script not found.");
 
-      // clear log file for this bot on each start
       try {
-        fs.writeFileSync(cfg.logFile, "");   // truncate to 0 bytes
-        cfg.lastSize = 0;                    // reset tail pointer
+        fs.writeFileSync(cfg.logFile, "");
+        cfg.lastSize = 0;
         console.log(`Cleared log for ${botName}: ${cfg.logFile}`);
       } catch (err) {
         console.error(`Failed to clear log for ${botName}:`, err.message);
@@ -198,57 +315,163 @@ client.on("messageCreate", async (msg) => {
       msg.reply(`Started bot '${botName}'.`);
     }
 
+    /* ;stop <BotName|batch1|batch2|all> */
     else if (cmd === ";stop") {
-      const botName = parts[0];
-      if (!botName) return msg.reply("Usage: ;stop <BotName>");
+      const argRaw = parts[0];
+      const arg = (argRaw || "").toLowerCase();
+      if (!arg) return msg.reply("Usage: ;stop <BotName|batch1|batch2|all>");
+
+      if (arg === "batch1" || arg === "batch2") {
+        const batchName = arg;
+        let pid = batchPids[batchName];
+        if (!pid) pid = deriveBatchPid(batchName);
+        if (pid && isPidAlive(pid)) {
+          spawn("taskkill", ["/PID", pid.toString(), "/T", "/F"]);
+          msg.reply(`Sent kill to ${batchName} (pid=${pid}).`);
+        } else {
+          msg.reply(`No alive PID found for ${batchName}.`);
+        }
+        batchPids[batchName] = null;
+        const bCfg = BATCH_CONFIG[batchName];
+        if (bCfg) {
+          for (const name of bCfg.bots) delete activeBots[name];
+        }
+        return;
+      }
+
+      if (arg === "all") {
+        let text = "";
+        for (const bName of Object.keys(BATCH_CONFIG)) {
+          let pid = batchPids[bName];
+          if (!pid) pid = deriveBatchPid(bName);
+          if (pid && isPidAlive(pid)) {
+            spawn("taskkill", ["/PID", pid.toString(), "/T", "/F"]);
+            text += `Sent kill to ${bName} (pid=${pid}).\n`;
+          } else {
+            text += `No alive PID for ${bName}.\n`;
+          }
+          batchPids[bName] = null;
+          const bCfg = BATCH_CONFIG[bName];
+          if (bCfg) {
+            for (const name of bCfg.bots) delete activeBots[name];
+          }
+        }
+        return msg.reply("```\n" + text + "```");
+      }
+
+      // stop specific bot
+      const botName = arg;
       if (!BOT_CONFIG[botName]) return msg.reply("Unknown bot name.");
 
       const pid = getBotPid(botName);
       if (pid && isPidAlive(pid)) {
-        // Fixed: Use Linux kill command instead of Windows taskkill
-        spawn("kill", ["-9", pid.toString()]);
+        spawn("taskkill", ["/PID", pid.toString(), "/T", "/F"]);
         msg.reply(`Sent kill to ${botName} (pid=${pid}).`);
       } else {
-        msg.reply(`No alive PID for ${botName}, trying generic kill.`);
-        // Optional: Use pkill for node processes, but be careful
-        spawn("pkill", ["-f", "node.*" + botName]);
+        msg.reply(`No alive PID for ${botName}.`);
       }
-
       delete activeBots[botName];
     }
 
+    /* ;chat <BotName|batch1|batch2|all> <message> */
     else if (cmd === ";chat") {
-      const botName = parts.shift();
+      const targetRaw = parts.shift();
       const text = parts.join(" ");
-      if (!botName || !text) return msg.reply("Usage: ;chat <BotName> <message>");
-      if (!BOT_CONFIG[botName]) return msg.reply("Unknown bot name.");
+      const target = (targetRaw || "").toLowerCase();
+      if (!target || !text) {
+        return msg.reply("Usage: ;chat <BotName|batch1|batch2|all> <message>");
+      }
 
-      writeIPC(botName, { type: "chat", message: text });
-      msg.reply(`Sent chat to ${botName}: ${text}`);
+      if (target === "all") {
+        for (const name in BOT_CONFIG) {
+          writeIPC(name, { type: "chat", message: text });
+        }
+        return msg.reply(`Sent chat to all bots: ${text}`);
+      }
+
+      if (target === "batch1" || target === "batch2") {
+        const bCfg = BATCH_CONFIG[target];
+        if (!bCfg) return msg.reply("Unknown batch.");
+        for (const name of bCfg.bots) {
+          writeIPC(name, { type: "chat", message: text });
+        }
+        return msg.reply(`Sent chat to ${target}: ${text}`);
+      }
+
+      if (!BOT_CONFIG[target]) return msg.reply("Unknown bot name.");
+
+      writeIPC(target, { type: "chat", message: text });
+      msg.reply(`Sent chat to ${target}: ${text}`);
     }
 
+    /* ;shop <BotName|batch1|batch2|all> */
     else if (cmd === ";shop") {
-      const botName = parts[0];
-      if (!botName) return msg.reply("Usage: ;shop <BotName>");
-      if (!BOT_CONFIG[botName]) return msg.reply("Unknown bot name.");
+      const targetRaw = parts[0];
+      const target = (targetRaw || "").toLowerCase();
+      if (!target) return msg.reply("Usage: ;shop <BotName|batch1|batch2|all>");
 
-      writeIPC(botName, { type: "startLoop" });
-      msg.reply(`StartLoop sent to ${botName}.`);
+      if (target === "all") {
+        for (const name in BOT_CONFIG) {
+          writeIPC(name, { type: "startLoop" });
+        }
+        return msg.reply("StartLoop sent to all bots.");
+      }
+
+      if (target === "batch1" || target === "batch2") {
+        const bCfg = BATCH_CONFIG[target];
+        if (!bCfg) return msg.reply("Unknown batch.");
+        for (const name of bCfg.bots) {
+          writeIPC(name, { type: "startLoop" });
+        }
+        return msg.reply(`StartLoop sent to ${target}.`);
+      }
+
+      if (!BOT_CONFIG[target]) return msg.reply("Unknown bot name.");
+
+      writeIPC(target, { type: "startLoop" });
+      msg.reply(`StartLoop sent to ${target}.`);
     }
 
+    /* ;stopshop <BotName|batch1|batch2|all> */
     else if (cmd === ";stopshop") {
-      const botName = parts[0];
-      if (!botName) return msg.reply("Usage: ;stopshop <BotName>");
-      if (!BOT_CONFIG[botName]) return msg.reply("Unknown bot name.");
+      const targetRaw = parts[0];
+      const target = (targetRaw || "").toLowerCase();
+      if (!target) return msg.reply("Usage: ;stopshop <BotName|batch1|batch2|all>");
 
-      writeIPC(botName, { type: "stopLoop" });
-      msg.reply(`StopLoop sent to ${botName}.`);
+      if (target === "all") {
+        for (const name in BOT_CONFIG) {
+          writeIPC(name, { type: "stopLoop" });
+        }
+        return msg.reply("StopLoop sent to all bots.");
+      }
+
+      if (target === "batch1" || target === "batch2") {
+        const bCfg = BATCH_CONFIG[target];
+        if (!bCfg) return msg.reply("Unknown batch.");
+        for (const name of bCfg.bots) {
+          writeIPC(name, { type: "stopLoop" });
+        }
+        return msg.reply(`StopLoop sent to ${target}.`);
+      }
+
+      if (!BOT_CONFIG[target]) return msg.reply("Unknown bot name.");
+
+      writeIPC(target, { type: "stopLoop" });
+      msg.reply(`StopLoop sent to ${target}.`);
     }
 
+    /* ;status */
     else if (cmd === ";status") {
-      let text = "Bots this controller believes are running:\n";
+      let text = "";
+
+      text += "Batch PIDs:\n";
+      for (const bName of Object.keys(BATCH_CONFIG)) {
+        const pid = batchPids[bName] || deriveBatchPid(bName) || "none";
+        text += `- ${bName}: pid=${pid}\n`;
+      }
+      text += "\nBots this controller believes are running:\n";
       const names = Object.keys(BOT_CONFIG);
-      if (!names.length) text += "none";
+      if (!names.length) text += "none\n";
       for (const name of names) {
         const pid = getBotPid(name);
         const alive = pid && isPidAlive(pid);
@@ -273,4 +496,3 @@ if (!DISCORD_TOKEN) {
 }
 
 client.login(DISCORD_TOKEN);
-
