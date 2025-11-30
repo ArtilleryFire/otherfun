@@ -1,24 +1,21 @@
-// bot.js
+// mineflayer_bot.js
 const mineflayer = require('mineflayer')
+const readline = require('readline')
 
-const HOST = process.env.MC_HOST || 'play.craftnesia.my.id'
-const PORT = Number(process.env.MC_PORT || 25565)
-const USERNAME = process.env.MC_USERNAME || 'NaftarDD'
-// Ganti sesuai versi server kalau tahu, misal '1.21', '1.20.4', dll
-const VERSION = process.env.MC_VERSION || '1.20.4'
-
-// delay reconnect biar nggak kebaca flood / bot attack
-const RETRY_DELAY_MS = Number(process.env.MC_RETRY_DELAY || 15000)
+const RETRY_DELAY_MS = 15000
 
 let bot
 let reconnectTimeout = null
+let lastOptions = null // simpan input biar dipakai lagi saat reconnect
 
 function log(...args) {
   const time = new Date().toISOString().split('T')[1].replace('Z', '')
   console.log(`[${time}]`, ...args)
 }
 
-function createBot() {
+function createBot(options) {
+  lastOptions = options
+
   if (reconnectTimeout) {
     clearTimeout(reconnectTimeout)
     reconnectTimeout = null
@@ -27,61 +24,101 @@ function createBot() {
   log('Creating bot...')
 
   bot = mineflayer.createBot({
-    host: HOST,
-    port: PORT,
-    username: USERNAME,
-    version: VERSION,
-    // kalau pakai akun resmi Microsoft:
-    // auth: 'microsoft',
-    // password: '...'
+    host: options.host,
+    port: options.port,
+    username: options.username,
+    version: options.version || false, // auto detect kalau kosong
   })
 
-  // EVENT: berhasil join dunia
   bot.once('spawn', () => {
     log('Bot spawned on the server.')
 
-    // Contoh: kirim command otomatis setelah join
-    // (Sesuaikan dengan kebutuhan server kamu)
+    // Auto /login kalau password diisi
+    if (options.loginPassword) {
+      log('Sending /login command...')
+      bot.chat(`/login ${options.loginPassword}`)
+    }
+
+    // Kalau mau auto /register atau /server survival, tinggal tambah di sini
     // bot.chat('/register password password')
-    // bot.chat('/login password')
     // bot.chat('/server survival')
   })
 
-  // EVENT: chat (kalau ada error parsing, minimal kita lihat raw-nya)
-  bot.on('message', (jsonMsg, position) => {
+  bot.on('message', (jsonMsg) => {
     try {
-      // beberapa versi pakai .toAnsi(), beberapa .toString()
       const msg = jsonMsg.toAnsi ? jsonMsg.toAnsi() : jsonMsg.toString()
       log('[CHAT]', msg)
     } catch (err) {
-      log('[CHAT RAW]', JSON.stringify(jsonMsg, null, 2))
+      log('[CHAT RAW]', JSON.stringify(jsonMsg))
     }
   })
 
-  // EVENT: error dari mineflayer / koneksi
   bot.on('error', (err) => {
     log('Bot error:', err && err.stack ? err.stack : err)
-
-    // Banyak ECONNRESET dari server → biarkan handler 'end' yang urus reconnect
     if (err.code === 'ECONNRESET') {
       log('Connection reset by server (ECONNRESET).')
     }
   })
 
-  // EVENT: koneksi terputus
   bot.on('end', () => {
     log('Bot disconnected from server. Scheduling reconnect...')
-
-    if (!reconnectTimeout) {
+    if (!reconnectTimeout && lastOptions) {
       reconnectTimeout = setTimeout(() => {
-        log(`Reconnecting to ${HOST}:${PORT} as ${USERNAME}...`)
-        createBot()
+        log(`Reconnecting to ${lastOptions.host}:${lastOptions.port} as ${lastOptions.username}...`)
+        createBot(lastOptions)
       }, RETRY_DELAY_MS)
     }
   })
 }
 
-// Handler global biar Node.js nggak langsung mati tanpa log
+// ==== BAGIAN INPUT INTERAKTIF ====
+
+const rl = readline.createInterface({
+  input: process.stdin,
+  output: process.stdout,
+})
+
+function ask(question, defaultValue = '') {
+  return new Promise((resolve) => {
+    const q = defaultValue ? `${question} [${defaultValue}]: ` : `${question}: `
+    rl.question(q, (answer) => {
+      resolve(answer.trim() || defaultValue)
+    })
+  })
+}
+
+async function main() {
+  try {
+    const defaultHost = process.env.MC_HOST || 'play.craftnesia.my.id'
+    const defaultPort = process.env.MC_PORT || '25565'
+    const defaultUsername = process.env.MC_USERNAME || 'NaftarDD'
+    const defaultVersion = process.env.MC_VERSION || '' // kosong = auto detect
+
+    const host = await ask('Host server', defaultHost)
+    const portStr = await ask('Port', defaultPort)
+    const username = await ask('Username (nickname bot)', defaultUsername)
+    const loginPassword = await ask('Password untuk /login (kosongkan kalau tidak perlu)', '')
+    const version = await ask('Versi Minecraft server (kosongkan untuk auto detect)', defaultVersion)
+
+    rl.close()
+
+    const options = {
+      host,
+      port: Number(portStr) || 25565,
+      username,
+      loginPassword: loginPassword || null,
+      version: version || false,
+    }
+
+    log('Starting bot with options:', options)
+    createBot(options)
+  } catch (err) {
+    rl.close()
+    console.error('Error saat input:', err)
+    process.exit(1)
+  }
+}
+
 process.on('uncaughtException', (err) => {
   log('Uncaught exception:', err && err.stack ? err.stack : err)
 })
@@ -90,5 +127,4 @@ process.on('unhandledRejection', (reason) => {
   log('Unhandled rejection:', reason)
 })
 
-// Start pertama kali
-createBot()
+main()
