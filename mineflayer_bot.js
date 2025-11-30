@@ -1,7 +1,7 @@
 // bot.js
 const mineflayer = require('mineflayer')
 
-const HOST = process.env.MC_HOST || 'alwination.id'
+const HOST = process.env.MC_HOST || 'play.craftnesia.my.id'
 const PORT = Number(process.env.MC_PORT || 25565)
 const USERNAME = process.env.MC_USERNAME || 'NaftarDD'
 // Ganti sesuai versi server kalau tahu, misal '1.21', '1.20.4', dll
